@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Drift-ish Boss — Amor</title>
+<style>
+  html,body{height:100%;margin:0;background:#111;color:#eee;font-family:sans-serif}
+  #game {display:block;margin:10px auto;border:6px solid #222;background:#000; image-rendering: pixelated;}
+  #ui{width:800px;margin:8px auto;text-align:center;}
+  button{padding:10px 16px;border-radius:8px;border:none;background:#1e90ff;color:#fff;font-weight:700;cursor:pointer}
+  .muted{opacity:.6}
+  canvas{display:block}
+  .small{font-size:13px;color:#bbb}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>Drift-ish Boss — with music</h2>
+  <div>
+    <button id="startBtn">Start (Play)</button>
+    <button id="restartBtn" class="muted">Restart</button>
+    <label class="small"> Controls: ← → or touch left/right</label>
+  </div>
+  <p class="small">Replace <code>SONG_URL</code> in the audio tag if you want the background track to be "Amor" by Emmanuel Cortes (you must provide the audio link/file yourself).</p>
+</div>
+
+<canvas id="game" width="800" height="600"></canvas>
+
+<!-- Background audio: replace SONG_URL with the URL to your audio file (mp3/ogg). -->
+<audio id="bgAudio" src="SONG_URL" loop crossorigin="anonymous"></audio>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // UI
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const bgAudio = document.getElementById('bgAudio');
+
+  // Game state
+  let running = false, gameOver = false, score = 0;
+
+  // Player
+  const player = { x: W/2, y: H - 120, w: 18, h: 30, speed: 6, angle: 0 };
+
+  // Track segments (centerX, halfWidth)
+  const segments = [];
+  const SEG_H = 18; // segment height (visual)
+  const SEG_COUNT = Math.ceil(H / SEG_H) + 6;
+  let baseGap = 120; // half gap
+  let difficulty = 0.0035; // how quickly center shifts
+
+  // Controls
+  const keys = { left:false, right:false };
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t.clientX < window.innerWidth/2) keys.left = true; else keys.right = true;
+  }, {passive:false});
+  canvas.addEventListener('touchend', (e) => { keys.left=false; keys.right=false; }, {passive:true});
+  window.addEventListener('keydown', (e) => { if(e.key === 'ArrowLeft') keys.left=true; if(e.key==='ArrowRight') keys.right=true; });
+  window.addEventListener('keyup', (e) => { if(e.key === 'ArrowLeft') keys.left=false; if(e.key==='ArrowRight') keys.right=false; });
+
+  // Initialize track
+  function resetTrack() {
+    segments.length = 0;
+    let cx = W/2;
+    for (let i=0;i<SEG_COUNT;i++) {
+      segments.push({cx, gap: baseGap + Math.sin(i*0.3)*30});
+      cx += (Math.random()-0.5)*8;
+      cx = Math.max(baseGap+40, Math.min(W-baseGap-40, cx));
+    }
+  }
+
+  function restart() {
+    running = false;
+    gameOver = false;
+    score = 0;
+    player.x = W/2;
+    player.angle = 0;
+    difficulty = 0.0035;
+    baseGap = 120;
+    resetTrack();
+    restartBtn.classList.add('muted');
+  }
+
+  // Collision: check player's x within gap at the segment where player is located
+  function checkCollision() {
+    // find segment near player's y
+    const segIndex = Math.floor((H - player.y) / SEG_H);
+    if (segIndex >= 0 && segIndex < segments.length) {
+      const s = segments[segIndex];
+      const leftBound = s.cx - s.gap;
+      const rightBound = s.cx + s.gap;
+      if (player.x - player.w/2 < leftBound || player.x + player.w/2 > rightBound) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Game loop
+  let last = 0;
+  function loop(ts) {
+    if (!running) return;
+    const dt = Math.min(40, ts - last || 16);
+    last = ts;
+
+    // update controls
+    if (keys.left) { player.x -= player.speed; player.angle = -0.25; }
+    else if (keys.right) { player.x += player.speed; player.angle = 0.25; }
+    else { player.angle *= 0.85; }
+
+    // clamp
+    player.x = Math.max(20, Math.min(W-20, player.x));
+
+    // scroll track downwards (simulate forward motion)
+    // shift segments down by removing last and prepending a new one influenced by previous
+    const head = segments[0];
+    // make new center slowly wander
+    const newCx = Math.max(baseGap+40, Math.min(W-baseGap-40, head.cx + (Math.random()-0.5)*8 - difficulty * (score/100) ));
+    const newGap = Math.max(80, baseGap + Math.sin(perfNow()*0.002)*40 - score*0.01);
+    segments.unshift({cx:newCx,gap:newGap});
+    segments.pop();
+
+    score += 1;
+    if (score % 600 === 0) { baseGap = Math.max(90, baseGap - 4); difficulty += 0.0002; }
+
+    // collision
+    if (checkCollision()) {
+      gameOver = true;
+      running = false;
+      restartBtn.classList.remove('muted');
+    }
+
+    // draw
+    draw();
+    if (!gameOver) requestAnimationFrame(loop);
+    else {
+      // draw final overlay
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 28px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("GAME OVER", W/2, H/2 - 20);
+      ctx.font = "18px sans-serif";
+      ctx.fillText("Score: " + score, W/2, H/2 + 10);
+      ctx.fillText("Press Restart to try again", W/2, H/2 + 40);
+      bgAudio.pause();
+    }
+  }
+
+  function perfNow(){ return (performance && performance.now) ? performance.now() : Date.now(); }
+
+  function draw() {
+    // clear
+    ctx.clearRect(0,0,W,H);
+
+    // background gradient
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0, '#05050a');
+    g.addColorStop(1, '#0a0f15');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+
+    // draw track segments — draw from bottom to top for parallax
+    for (let i = segments.length-1; i >=0; i--) {
+      const s = segments[i];
+      const y = H - (i * SEG_H) - SEG_H/2;
+      const left = s.cx - s.gap;
+      const right = s.cx + s.gap;
+
+      // wall thickness grows with distance
+      const t = 40 + (i/segments.length)*80;
+
+      // left wall
+      ctx.fillStyle = '#1f1f25';
+      ctx.fillRect(0, y - SEG_H/2, left, SEG_H);
+      // right wall
+      ctx.fillRect(right, y - SEG_H/2, W - right, SEG_H);
+
+      // faint track edge highlight
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillRect(left, y - 2, right - left, 4);
+    }
+
+    // draw player (simple rotated car triangle)
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(player.angle);
+    ctx.beginPath();
+    ctx.moveTo(0, -player.h/2);
+    ctx.lineTo(-player.w/2, player.h/2);
+    ctx.lineTo(player.w/2, player.h/2);
+    ctx.closePath();
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fill();
+    ctx.strokeStyle = '#fff2';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+
+    // HUD
+    ctx.fillStyle = '#fff';
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("Score: " + score, 12, 24);
+    ctx.textAlign = "right";
+    ctx.fillText("Gap: " + Math.round(baseGap*2) + "px", W-12, 24);
+  }
+
+  // UI events
+  startBtn.addEventListener('click', () => {
+    if (!running && !gameOver) {
+      // user gesture: can start audio
+      try { bgAudio.currentTime = 0; bgAudio.play().catch(()=>{}); } catch(e){}
+      running = true;
+      last = performance.now();
+      requestAnimationFrame(loop);
+    } else if (gameOver) {
+      restart();
+      running = true;
+      try { bgAudio.currentTime = 0; bgAudio.play().catch(()=>{}); } catch(e){}
+      last = performance.now();
+      requestAnimationFrame(loop);
+    }
+  });
+
+  restartBtn.addEventListener('click', () => {
+    restart();
+    running = true;
+    try { bgAudio.currentTime = 0; bgAudio.play().catch(()=>{}); } catch(e){}
+    last = performance.now();
+    requestAnimationFrame(loop);
+  });
+
+  // small helper for keyboard-friendly focus
+  canvas.tabIndex = 1000;
+  canvas.style.outline = 'none';
+
+  // initial setup
+  resetTrack();
+  draw();
+  // expose restart
+  restartBtn.classList.add('muted');
+})();
+</script>
+</body>
+</html>
